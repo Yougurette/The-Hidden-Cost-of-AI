@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Base map of the Hidden Cost of AI simulation.">
+<style>[hidden]{display:none!important} body{margin:0} img{max-width:100%}</style>
+<title>Hidden Cost Map</title>
+<style>
+/* Layout: a single map plate centred on a dark surround, sized to fit the viewport. No text. */
+:root { --bg: #1b1d1f; color-scheme: dark; }
+html, body { height: 100%; }
+body { background: var(--bg); display: grid; place-items: center; box-sizing: border-box;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px; }
+canvas#map { display: block; width: min(100%, calc((100dvh - 32px) * 1.5)); max-width: 100%; aspect-ratio: 3 / 2; height: auto; border-radius: 4px; }
+#sk { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="map" aria-label="Top-down map with a city, lake, river, outskirts, forests and farmland"></canvas>
+<svg id="sk" viewBox="0 0 1200 800" aria-hidden="true"></svg>
+
+<script>
+(() => {
+const W = 1200, H = 800, S = 3;
+const NS = "http://www.w3.org/2000/svg";
+const sk = document.getElementById("sk");
+const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); sk.appendChild(e); return e; };
+const pt = (x, y) => { const p = sk.createSVGPoint(); p.x = x; p.y = y; return p; };
+const inFill = (e, x, y) => { try { return e.isPointInFill(pt(x, y)); } catch (_) { return false; } };
+const mk = s => () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const smoothPath = p => { const n = p.length; let d = `M ${p[0][0].toFixed(1)} ${p[0][1].toFixed(1)}`;
+  for (let i = 0; i < n; i++) { const p0 = p[(i + n - 1) % n], p1 = p[i], p2 = p[(i + 1) % n], p3 = p[(i + 2) % n];
+    d += ` C ${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)} ${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(1)}, ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)} ${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`; }
+  return d + " Z"; };
+
+/* ---------- Phase 1: rebuild the approved sketch composition (same seed and order) ---------- */
+const rnd = mk(11);
+const blob = (cx, cy, rx, ry, irr, n = 14) => {
+  let r = Array.from({ length: n }, () => 1 + (rnd() * 2 - 1) * irr);
+  r = r.map((v, i) => (v * 2 + r[(i + 1) % n] + r[(i + n - 1) % n]) / 4);
+  return smoothPath(r.map((v, i) => { const a = i / n * Math.PI * 2; return [cx + Math.cos(a) * rx * v, cy + Math.sin(a) * ry * v]; }));
+};
+const rpaths = [
+  ["M -10 150 C 80 130, 150 200, 212 238", 22],
+  ["M 322 330 C 350 420, 430 470, 520 520 C 600 565, 700 610, 800 615", 22],
+  ["M 800 615 C 880 590, 960 570, 1040 530 C 1110 495, 1160 500, 1215 470", 15],
+  ["M 800 615 C 870 670, 950 705, 1040 712 C 1110 720, 1160 760, 1215 785", 15],
+  ["M 790 -10 C 780 90, 830 200, 860 300 C 890 400, 930 480, 990 552", 11]
+];
+const riverEls = rpaths.map(([d, w]) => el("path", { d, fill: "none", stroke: "#000", "stroke-width": w, "stroke-linecap": "round" }));
+const oldLake = el("path", { d: blob(300, 262, 112, 78, 0.28, 12) });
+const inWaterOld = (x, y, pad = 26) => { if (inFill(oldLake, x, y)) return true;
+  for (const r of riverEls) { const w = +r.getAttribute("stroke-width"); r.setAttribute("stroke-width", w + pad);
+    let hit = false; try { hit = r.isPointInStroke(pt(x, y)); } catch (_) {} r.setAttribute("stroke-width", w); if (hit) return true; }
+  return false; };
+const farms = [
+  { cx: 115, cy: 470, rx: 105, ry: 150, rot: -12 },
+  { cx: 1025, cy: 690, rx: 175, ry: 92, rot: 8 }
+];
+const farmDs = [], parcels = [];
+farms.forEach(f => {
+  const d = blob(f.cx, f.cy, f.rx, f.ry, 0.22, 10); farmDs.push(d); const zone = el("path", { d });
+  const a = f.rot * Math.PI / 180, cw = 38, ch = 24;
+  for (let u = -f.rx * 1.6; u < f.rx * 1.6; u += cw) for (let v = -f.ry * 1.6; v < f.ry * 1.6; v += ch) {
+    const w = cw * (0.6 + rnd() * 0.9), h = ch;
+    const mx = f.cx + Math.cos(a) * (u + w/2) - Math.sin(a) * (v + h/2), my = f.cy + Math.sin(a) * (u + w/2) + Math.cos(a) * (v + h/2);
+    if (!inFill(zone, mx, my) || inWaterOld(mx, my, 14)) continue;
+    const x = f.cx + Math.cos(a) * u - Math.sin(a) * v, y = f.cy + Math.sin(a) * u + Math.cos(a) * v;
+    rnd(); parcels.push({ x, y, w: w - 3, h: h - 3, rot: f.rot, mx, my });
+  }
+});
+const forests = [
+  { cx: 1000, cy: 185, rx: 185, ry: 135, irr: 0.3, n: 520 },
+  { cx: 640, cy: 120, rx: 70, ry: 45, irr: 0.35, n: 70 },
+  { cx: 1125, cy: 395, rx: 55, ry: 70, irr: 0.35, n: 60 },
+  { cx: 180, cy: 715, rx: 85, ry: 50, irr: 0.35, n: 80 },
+  { cx: 640, cy: 735, rx: 60, ry: 38, irr: 0.4, n: 45 }
+];
+const forestDs = [];
+forests.forEach(f => {
+  const d = blob(f.cx, f.cy, f.rx, f.ry, f.irr, 13); forestDs.push(d); const zone = el("path", { d });
+  let placed = 0, tries = 0;
+  while (placed < f.n && tries++ < f.n * 25) {
+    const x = f.cx + (rnd() * 2 - 1) * f.rx * 1.3, y = f.cy + (rnd() * 2 - 1) * f.ry * 1.3;
+    if (!inFill(zone, x, y) || inWaterOld(x, y, 18)) continue;
+    rnd(); placed++;
+  }
+});
+const cityC = { cx: 500, cy: 455, rx: 195, ry: 130 };
+const cityD = blob(cityC.cx, cityC.cy, cityC.rx, cityC.ry, 0.32, 13);
+
+/* ---------- Phase 2: map render ---------- */
+const R = mk(2024);
+const pick = a => a[Math.floor(R() * a.length)];
+const cv = document.getElementById("map"); cv.width = W * S; cv.height = H * S;
+const ctx = cv.getContext("2d"); ctx.scale(S, S); ctx.lineCap = "round"; ctx.lineJoin = "round";
+const hc = document.createElement("canvas").getContext("2d"); hc.lineCap = "round"; hc.lineJoin = "round";
+const inP = (p, x, y) => hc.isPointInPath(p, x, y);
+const nearP = (p, x, y, w) => { hc.lineWidth = w; return hc.isPointInStroke(p, x, y); };
+
+// smooth value noise for terrain, grass and texture
+const NR = mk(77), NG = 256, ngrid = new Float32Array(NG * NG).map(() => NR());
+const vnoise = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const g = (a, b) => ngrid[((b & 255) << 8) + (a & 255)];
+  return (g(xi, yi) * (1 - u) + g(xi + 1, yi) * u) * (1 - v) + (g(xi, yi + 1) * (1 - u) + g(xi + 1, yi + 1) * u) * v; };
+const fbm = (x, y, oct = 5) => { let s = 0, a = .5, f = 1, n = 0; for (let i = 0; i < oct; i++) { s += a * vnoise(x * f, y * f); n += a; a *= .5; f *= 2.03; } return s / n; };
+const bitmap = (w, h, fn) => { const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d"), id = g.createImageData(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const p = fn(x, y), i = (y * w + x) * 4; id.data[i] = p[0]; id.data[i + 1] = p[1]; id.data[i + 2] = p[2]; id.data[i + 3] = p[3] ?? 255; }
+  g.putImageData(id, 0, 0); return c; };
+
+// organic lake: layered harmonics, re-rolled until it still receives and releases the river
+let lakeD, lakeP;
+for (let s = 1; s < 200; s++) {
+  const r = mk(500 + s), n = 28, ph = [r() * 6.28, r() * 6.28, r() * 6.28, r() * 6.28];
+  let rad = Array.from({ length: n }, (_, i) => { const a = i / n * Math.PI * 2;
+    return 1 + 0.17 * Math.sin(2 * a + ph[0]) + 0.12 * Math.sin(3 * a + ph[1]) + 0.08 * Math.sin(5 * a + ph[2]) + 0.05 * Math.sin(8 * a + ph[3]) + (r() * 2 - 1) * 0.05; });
+  rad = rad.map((v, i) => (v * 2 + rad[(i + 1) % n] + rad[(i + n - 1) % n]) / 4);
+  const d = smoothPath(rad.map((v, i) => { const a = i / n * Math.PI * 2; return [300 + Math.cos(a) * 118 * v, 262 + Math.sin(a) * 80 * v]; }));
+  const p = new Path2D(d);
+  if (inP(p, 214, 240) && inP(p, 321, 326) && !inP(p, 420, 380)) { lakeD = d; lakeP = p; break; }
+}
+
+const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
+const warp = (d, amp, freq, so) => { const e = el("path", { d }), L = e.getTotalLength(), n = Math.max(40, Math.round(L / 3)), pts = [];
+  for (let i = 0; i < n; i++) pts.push(e.getPointAtLength(i / n * L));
+  const out = pts.map((q, i) => { const a = pts[(i + n - 1) % n], b = pts[(i + 1) % n]; let nx = -(b.y - a.y), ny = b.x - a.x; const l = Math.hypot(nx, ny) || 1;
+    const k = clampN((fbm(q.x / freq + so, q.y / freq + so * 2, 4) - .5) * 5, -1, 1) * amp; return [q.x + nx / l * k, q.y + ny / l * k]; });
+  e.remove(); return smoothPath(out); };
+const riverP = rpaths.map(([d, w]) => ({ p: new Path2D(d), w }));
+lakeD = warp(lakeD, 10, 28, 21); lakeP = new Path2D(lakeD);
+const lakeEl = el("path", { d: lakeD });
+const farmP = farmDs.map((d, i) => new Path2D(warp(d, 12, 45, 3 + i)));
+const forestDsW = forestDs.map((d, i) => warp(d, 20, 30, 7 + i));
+const forestP = forestDsW.map(d => new Path2D(d));
+const forestEls = forestDsW.map(d => el("path", { d }));
+const cityP = new Path2D(warp(cityD, 16, 38, 13));
+const riverSegs = riverEls.map((e, i) => { const w = rpaths[i][1], L = e.getTotalLength(), pts = [];
+  for (let s = 0; s <= L; s += 2) { const q = e.getPointAtLength(s); pts.push({ x: q.x, y: q.y, w: w * (.62 + .8 * fbm(q.x / 45 + 30, q.y / 45, 3)), b: 2 + 4 * fbm(q.x / 20, q.y / 20 + 50, 2) }); }
+  return pts; });
+const strokeRiver = (g, pts, f, col) => { g.strokeStyle = col; for (let i = 1; i < pts.length; i++) { g.lineWidth = f(pts[i]); g.beginPath(); g.moveTo(pts[i - 1].x, pts[i - 1].y); g.lineTo(pts[i].x, pts[i].y); g.stroke(); } };
+const roads = [
+  ["M -10 600 C 120 590, 230 560, 330 520 C 420 480, 560 450, 700 440 C 820 432, 950 450, 1210 430", 4.4],
+  ["M 520 -10 C 525 110, 505 230, 500 340 C 495 430, 520 520, 565 600 C 610 680, 625 740, 640 810", 4.4],
+  ["M 700 440 C 750 520, 790 600, 860 690 C 900 740, 930 775, 960 810", 3.6],
+  ["M 330 520 C 250 470, 180 430, 100 410 C 50 400, 20 395, -10 392", 3.4],
+  ["M 700 440 C 760 370, 820 310, 900 265 C 990 215, 1090 215, 1210 190", 3.8]
+].map(([d, w]) => ({ p: new Path2D(d), w }));
+
+const inWater = (x, y, pad = 0) => inP(lakeP, x, y) || (pad > 0 && nearP(lakeP, x, y, pad * 2)) || riverP.some(r => nearP(r.p, x, y, r.w + pad * 2));
+const nearRoad = (x, y, pad = 0) => roads.some(r => nearP(r.p, x, y, r.w + pad * 2));
+const inFarm = (x, y) => farmP.some(p => inP(p, x, y));
+const inForest = (x, y) => forestP.some(p => inP(p, x, y));
+const inCity = (x, y) => inP(cityP, x, y);
+const cityNorm = (x, y) => Math.hypot((x - cityC.cx) / cityC.rx, (y - cityC.cy) / cityC.ry);
+
+/* ---------- cartographic style: flat land-use colours, cased roads, building footprints ---------- */
+const MAP = { land: "#eceee3", meadow: "#dcebc9", farm: "#f3efda", fieldLine: "#ddd5b6", forest: "#c3deb0", forestEdge: "#a9cd94", tree: "#a9cf93",
+  water: "#a4d3e8", waterEdge: "#8cc2dc", resi: "#e8e5df", block: "#e1ddd6", bldg: "#d7d1c9", bldgEdge: "#c1bab0", park: "#c9e7b9",
+  street: "#ffffff", streetCase: "#d4cfc6", primary: "#fcd88a", primaryCase: "#e3b45f", secondary: "#fff6d8", secondaryCase: "#d8c48f" };
+
+/* generation first (same rules as the realistic map), drawing after */
+const th = -0.13, cth = Math.cos(th), sth = Math.sin(th);
+const toW = (u, v) => [cityC.cx + u * cth - v * sth, cityC.cy + u * sth + v * cth];
+const blocks = [], bld = [], parks = [];
+const BW = 21, BH = 16, ST = 3.2;
+for (let u = -310; u < 310; u += BW + ST) for (let v = -210; v < 210; v += BH + ST) {
+  const [wx, wy] = toW(u + BW / 2, v + BH / 2);
+  if (!inCity(wx, wy)) continue;
+  const corners = [[u, v], [u + BW, v], [u, v + BH], [u + BW, v + BH]].map(([a, b]) => toW(a, b));
+  if (corners.some(([x, y]) => inWater(x, y, 2.5) || nearRoad(x, y, 1.2))) continue;
+  const d = cityNorm(wx, wy);
+  if (R() < Math.max(0, d - 0.75) * 1.2) continue;
+  blocks.push([u, v]);
+  if (R() < 0.07) { parks.push([u, v]); continue; }
+  if (d < 0.38 && R() < 0.3) { bld.push({ x: u + 2, y: v + 2, w: BW - 4 - R() * 4, h: BH - 4 - R() * 3, tall: true }); continue; }
+  const dp = 4.2 + R() * 1.3;
+  for (const yy of [v + .6, v + BH - .6 - dp]) { let x = u + .6; while (x < u + BW - 1.4) { const sw = Math.min(u + BW - .6 - x, 3.5 + R() * 5); if (R() > .05 + d * .3) bld.push({ x, y: yy, w: sw - .35, h: dp }); x += sw; } }
+  for (const xx of [u + .6, u + BW - .6 - dp]) { let y = v + .6 + dp; while (y < v + BH - .6 - dp - .5) { const sh = Math.min(v + BH - .6 - dp - y, 3 + R() * 4); if (R() > .05 + d * .3) bld.push({ x: xx, y, w: dp, h: sh - .35 }); y += sh; } }
+}
+const clusters = [[-120, -35], [-35, 45], [45, 150]];
+const occ = new Set(), cell = (x, y) => `${Math.round(x / 5)},${Math.round(y / 5)}`;
+const houses = [], lanes = [];
+const okHouse = (x, y) => x > 6 && x < W - 6 && y > 6 && y < H - 6 && !inCity(x, y) && !inWater(x, y, 3) && !inForest(x, y) && !inFarm(x, y) && !nearRoad(x, y, 2.5) && !occ.has(cell(x, y));
+const ringPt = (a, k) => [cityC.cx + Math.cos(a) * cityC.rx * k, cityC.cy + Math.sin(a) * cityC.ry * k];
+const queue = [];
+clusters.forEach(([a0, a1]) => { const n = Math.round((a1 - a0) / 8);
+  for (let i = 0; i < n; i++) { const a = (a0 + (i + R()) * (a1 - a0) / n) * Math.PI / 180; queue.push([...ringPt(a, .7), a + (R() - .5) * .5, 50 + R() * 90, 0]); } });
+while (queue.length) {
+  let [x, y, hd, len, depth] = queue.shift(), turn = (R() - .5) * .05, seg = [], guard = 0;
+  while (inCity(x, y) && guard++ < 80) { x += Math.cos(hd) * 3; y += Math.sin(hd) * 3; }
+  for (let s = 0; s < len; s += 3) {
+    turn = clampN(turn + (R() - .5) * .025, -.055, .055); hd += turn; x += Math.cos(hd) * 3; y += Math.sin(hd) * 3;
+    if (x < 4 || x > W - 4 || y < 4 || y > H - 4 || inWater(x, y, 1.5) || inForest(x, y) || inFarm(x, y) || inCity(x, y) || cityNorm(x, y) > 1.95) break;
+    seg.push([x, y]);
+    if (depth < 2 && s > 12 && R() < .06) queue.push([x, y, hd + (R() < .5 ? 1 : -1) * (1.3 + R() * .5), 18 + R() * 45, depth + 1]);
+  }
+  if (seg.length > 3) lanes.push(seg);
+}
+lanes.forEach(seg => { for (let i = 1; i < seg.length; i++) {
+  const [x0, y0] = seg[i - 1], [x1, y1] = seg[i], L = Math.hypot(x1 - x0, y1 - y0), ang = Math.atan2(y1 - y0, x1 - x0), nx = -Math.sin(ang), ny = Math.cos(ang);
+  for (let t = 0; t < L; t += 7.5) for (const s of [-1, 1]) {
+    if (R() < 0.3) continue;
+    const x = x0 + (x1 - x0) * t / L + nx * s * 5.2, y = y0 + (y1 - y0) * t / L + ny * s * 5.2;
+    if (!okHouse(x, y) || cityNorm(x, y) > 1.85) continue;
+    occ.add(cell(x, y)); houses.push({ x, y, ang, w: 4.6 + R() * 1.6, h: 3.4 + R() * 1 });
+  } } });
+
+/* 1. land and meadows */
+ctx.fillStyle = MAP.land; ctx.fillRect(0, 0, W, H);
+ctx.drawImage(bitmap(300, 200, (x, y) => { const v = fbm(x / 40 + 5, y / 40, 4); return v > .53 ? [220, 235, 201, Math.min(255, (v - .53) * 2400)] : [0, 0, 0, 0]; }), 0, 0, W, H);
+ctx.save(); ctx.globalAlpha = .045;
+ctx.drawImage(bitmap(300, 200, (x, y) => { const h = (a, b) => fbm(a / 42, b / 42, 4), s = (h(x - 1, y - 1) - h(x + 1, y + 1)) * 5;
+  return s > 0 ? [255, 255, 255, Math.min(255, s * 600)] : [90, 100, 80, Math.min(255, -s * 600)]; }), 0, 0, W, H);
+ctx.restore();
+
+/* 2. farmland: pale fields with thin boundaries */
+farmP.forEach(p => { ctx.fillStyle = MAP.farm; ctx.fill(p); ctx.strokeStyle = MAP.fieldLine; ctx.lineWidth = .8; ctx.stroke(p); });
+const FIELDS = ["#f3eed6", "#eee8c9", "#e9eecf", "#f5f0dc", "#ebe5c4"];
+parcels.filter(f => farmP.some(q => inP(q, f.mx, f.my))).forEach(f => {
+  ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.rot * Math.PI / 180);
+  ctx.fillStyle = pick(FIELDS); ctx.fillRect(0, 0, f.w, f.h);
+  ctx.strokeStyle = MAP.fieldLine; ctx.lineWidth = .5; ctx.strokeRect(0, 0, f.w, f.h);
+  ctx.restore(); });
+
+/* 3. forests: flat green with small tree symbols */
+forestP.forEach((p, fi) => {
+  ctx.fillStyle = MAP.forest; ctx.fill(p);
+  ctx.save(); ctx.clip(p); const bb = forestEls[fi].getBBox();
+  ctx.fillStyle = MAP.tree;
+  for (let y = bb.y; y < bb.y + bb.height; y += 7) for (let x = bb.x + ((y / 7) % 2) * 3.5; x < bb.x + bb.width; x += 7) {
+    const tx = x + (R() - .5) * 2, ty = y + (R() - .5) * 2; ctx.beginPath(); ctx.arc(tx, ty, 1.25, 0, 7); ctx.fill(); }
+  ctx.restore();
+  ctx.strokeStyle = MAP.forestEdge; ctx.lineWidth = .8; ctx.stroke(p);
+});
+
+/* 4. residential areas */
+ctx.fillStyle = MAP.resi; ctx.fill(cityP);
+ctx.save(); ctx.strokeStyle = MAP.resi; ctx.lineWidth = 20;
+lanes.forEach(seg => { ctx.beginPath(); seg.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); });
+ctx.restore();
+
+/* 5. water */
+const drawRiverFill = (g, pts, f, col) => { g.fillStyle = col; pts.forEach(q => { g.beginPath(); g.arc(q.x, q.y, f(q) / 2, 0, 7); g.fill(); }); };
+riverSegs.forEach(pts => drawRiverFill(ctx, pts, q => q.w + 1.4, MAP.waterEdge));
+ctx.fillStyle = MAP.waterEdge; ctx.save(); ctx.lineWidth = 1.4; ctx.strokeStyle = MAP.waterEdge; ctx.stroke(lakeP); ctx.restore();
+riverSegs.forEach(pts => drawRiverFill(ctx, pts, q => q.w, MAP.water));
+ctx.fillStyle = MAP.water; ctx.fill(lakeP);
+
+/* 6. streets: outskirts lanes, city grid, then main roads on top */
+ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round";
+const laneStroke = (w, c) => { ctx.lineWidth = w; ctx.strokeStyle = c; lanes.forEach(seg => { ctx.beginPath(); seg.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); }); };
+laneStroke(2.6, MAP.streetCase); laneStroke(1.8, MAP.street);
+ctx.restore();
+ctx.save(); ctx.translate(cityC.cx, cityC.cy); ctx.rotate(th);
+ctx.fillStyle = MAP.streetCase; blocks.forEach(([u, v]) => ctx.fillRect(u - ST / 2 - .5, v - ST / 2 - .5, BW + ST + 1, BH + ST + 1));
+ctx.fillStyle = MAP.street; blocks.forEach(([u, v]) => ctx.fillRect(u - ST / 2, v - ST / 2, BW + ST, BH + ST));
+blocks.forEach(([u, v]) => { ctx.fillStyle = MAP.block; ctx.fillRect(u, v, BW, BH); });
+parks.forEach(([u, v]) => { ctx.fillStyle = MAP.park; ctx.fillRect(u, v, BW, BH); });
+bld.forEach(b => { ctx.fillStyle = b.tall ? "#cfc8be" : MAP.bldg; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = MAP.bldgEdge; ctx.lineWidth = .35; ctx.strokeRect(b.x, b.y, b.w, b.h); });
+ctx.restore();
+houses.forEach(h => { ctx.save(); ctx.translate(h.x, h.y); ctx.rotate(h.ang);
+  ctx.fillStyle = MAP.bldg; ctx.fillRect(-h.w / 2, -h.h / 2, h.w, h.h); ctx.strokeStyle = MAP.bldgEdge; ctx.lineWidth = .35; ctx.strokeRect(-h.w / 2, -h.h / 2, h.w, h.h);
+  ctx.restore(); });
+roads.forEach((r, i) => { ctx.lineWidth = r.w + 1.8; ctx.strokeStyle = i < 2 ? MAP.primaryCase : MAP.secondaryCase; ctx.stroke(r.p); });
+roads.forEach((r, i) => { ctx.lineWidth = r.w; ctx.strokeStyle = i < 2 ? MAP.primary : MAP.secondary; ctx.stroke(r.p); });
+
+/* 7. a few single trees as small dots, like park trees on a map */
+for (let i = 0, n = 0; i < 4000 && n < 70; i++) { const x = 10 + R() * (W - 20), y = 10 + R() * (H - 20);
+  if (inWater(x, y, 4) || inForest(x, y) || inFarm(x, y) || inCity(x, y) || nearRoad(x, y, 3) || cityNorm(x, y) < 1.9) continue;
+  ctx.fillStyle = "#b6d8a0"; ctx.beginPath(); ctx.arc(x, y, 2.2, 0, 7); ctx.fill(); ctx.strokeStyle = "#9cc785"; ctx.lineWidth = .5; ctx.stroke(); n++; }
+})();
+</script>
+</body>
+</html>

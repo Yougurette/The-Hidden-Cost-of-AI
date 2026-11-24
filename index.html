@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Drag data centres onto a map and see the local consequences: electricity, water, power bills, noise, air and land.">
+<style>[hidden]{display:none!important} body{margin:0} img{max-width:100%}</style>
+<title>Hidden Cost Effects</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Layout: map with the cube tray on the left, a fixed-width information panel on the right; stacked on narrow screens. */
+:root { --bg: #1b1d1f; --panel: #232629; --line: #34383c; --fg: #eceeea; --muted: #a3a9a5; --faint: #7d8480; --accent: #f2c230;
+  --c-prompt: #b07d00; --c-dc: #2f7fc8;
+  --display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif; --body: Inter, ui-sans-serif, system-ui, sans-serif; color-scheme: dark; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); margin: 0; box-sizing: border-box; font-family: var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 16px; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; align-items: start; max-width: 1800px; margin: 0 auto; }
+.mapcol { display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 0; }
+#stage { position: relative; width: min(100%, calc((100dvh - 110px) * 1.5)); aspect-ratio: 3 / 2; max-width: 100%; border-radius: 4px; overflow: hidden; touch-action: none; }
+#stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#sk { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.bar { display: flex; align-items: center; gap: 14px; }
+#tray { display: flex; gap: 10px; padding: 8px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; touch-action: none; }
+.slot { width: 44px; height: 44px; border-radius: 6px; border: 1px dashed #4a4f54; box-sizing: border-box; }
+.slot.full { border: 1.5px solid #4b5260; cursor: grab; background: repeating-linear-gradient(#6e7686 0 4px, #8d95a4 4px 7px); box-shadow: 3px 3px 0 rgba(0,0,0,.3); }
+.slot.full:hover { outline: 2px solid var(--accent); outline-offset: 2px; }
+#ghost { position: fixed; z-index: 5; pointer-events: none; border: 1.5px solid #4b5260; background: repeating-linear-gradient(#6e7686 0 4px, #8d95a4 4px 7px); opacity: .9; }
+.round, #reset { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; display: grid; place-items: center; }
+.round:hover { border-color: var(--fg); }
+.round:focus-visible, #start:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+aside { --p-bg: #f6f7f1; --p-line: #dcdfd2; --p-ink: #2a2f2b; --p-muted: #6a716b; --p-faint: #969c95;
+  background: var(--p-bg); color: var(--p-ink); border: 1px solid var(--p-line); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 20px;
+  max-height: calc(100dvh - 32px); overflow-y: auto; box-sizing: border-box; min-width: 0; }
+aside h1 { font: 600 1.2rem/1.2 var(--display); margin: 0; }
+aside .q { margin: 2px 0 0; color: var(--p-muted); font-size: 13px; }
+aside h2 { font: 600 10.5px var(--body); text-transform: uppercase; letter-spacing: .09em; color: var(--p-faint); margin: 0 0 8px; }
+aside section { border-top: 1px solid var(--p-line); padding-top: 12px; }
+.stats { margin: 0; display: grid; gap: 2px; }
+.stats div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 0; }
+.stats dt { font-size: 13px; color: var(--p-muted); display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.stats dt .ic { width: 17px; height: 17px; flex: none; }
+.stats dd { margin: 0; font: 600 14.5px var(--body); font-variant-numeric: tabular-nums; text-align: right; }
+.big { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; margin-bottom: 8px; }
+.big div, .facts div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.big .n, .facts .n { font: 600 19px var(--display); font-variant-numeric: tabular-nums; }
+.big div:first-child .n { color: var(--c-prompt); } .big div:last-child .n { color: var(--c-dc); }
+.big .t, .facts .t { font-size: 11.5px; color: var(--p-muted); }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .zoom { fill: #e9ebe2; } .chart .step { fill: var(--p-faint); font: 600 9.5px var(--body); } .chart .val { fill: var(--p-ink); font: 600 11.5px var(--body); font-variant-numeric: tabular-nums; }
+.chart .lab { fill: var(--p-ink); font: 11.5px var(--body); }
+.chart .tick { fill: var(--p-faint); font: 9.5px var(--body); }
+.chart .bar:hover { stroke: var(--p-ink); stroke-width: 1.5; }
+.punch { font: 600 15px/1.35 var(--display); margin: 2px 0 10px; }
+.punch b { color: var(--c-dc); }
+.dotkey { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--p-muted); margin-bottom: 8px; }
+.dotkey b { color: var(--p-ink); }
+.dotkey i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin: 0 8px 0 3px; vertical-align: 0; }
+.d-dc { background: var(--c-dc); } .d-pr { background: var(--c-prompt); box-shadow: 0 0 0 2px #f6f7f1, 0 0 0 3.5px var(--c-prompt); }
+.chart.dots canvas { display: block; }
+.cap { font-size: 12.5px; color: var(--p-muted); margin: 6px 0 0; }
+.cap b { color: var(--p-ink); }
+.split { display: flex; height: 16px; gap: 2px; border-radius: 4px; overflow: hidden; }
+.split .known { width: 2%; min-width: 6px; background: var(--c-prompt); }
+.split .unk { flex: 1; background: repeating-linear-gradient(135deg, #c9ccc0 0 4px, #e7e9df 4px 8px); }
+.splitlab { display: flex; justify-content: space-between; font-size: 11.5px; margin-top: 6px; color: var(--p-muted); gap: 10px; }
+.splitlab b { color: var(--p-ink); font-variant-numeric: tabular-nums; }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.foot { font-size: 11px; color: var(--p-faint); margin: 0; border-top: 1px solid var(--p-line); padding-top: 10px; }
+#intro { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(20,22,24,.62); backdrop-filter: blur(3px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.intro-card { background: #f6f7f1; color: #2a2f2b; border-radius: 16px; padding: 30px 32px 22px; max-width: 520px; width: 100%; box-sizing: border-box; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.intro-card .eyebrow { margin: 0; font: 600 10.5px var(--body); letter-spacing: .1em; text-transform: uppercase; color: #969c95; }
+.intro-card h1 { font: 600 1.9rem/1.1 var(--display); margin: 6px 0 16px; text-wrap: balance; }
+.intro-points { margin: 0 0 16px; padding: 0; list-style: none; display: grid; gap: 8px; font-size: 14.5px; line-height: 1.4; }
+.intro-points li { padding-left: 14px; border-left: 3px solid #dcdfd2; }
+.intro-points li:first-child { border-color: var(--c-prompt); } .intro-points li:nth-child(2) { border-color: var(--c-dc); } .intro-points li:last-child { border-color: #c8389a; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 9px 4px 6px; border: 1px solid #dcdfd2; border-radius: 999px; background: #fff; }
+.chip .ic { width: 15px; height: 15px; }
+.how { font-size: 15px; color: #4a514b; margin: 0 0 22px; line-height: 1.55; }
+.how b { color: #2a2f2b; }
+#start { font: 600 15px var(--body); background: #2a2f2b; color: #fff; border: 0; border-radius: 999px; padding: 11px 28px; cursor: pointer; }
+#start:hover { background: #000; }
+.fine { font-size: 11px; color: #969c95; margin: 14px 0 0; }
+#tip { position: fixed; z-index: 10; max-width: 230px; background: #2a2f2b; color: #fff; border: 0; border-radius: 6px; padding: 6px 8px; font-size: 12px; pointer-events: none; }
+@media (max-width: 1000px) { .layout { grid-template-columns: minmax(0, 1fr); } aside { max-height: none; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="mapcol">
+    <div id="stage">
+      <canvas id="base" aria-label="Map with a city, lake, river, outskirts, forests and farmland"></canvas>
+      <canvas id="fx" aria-hidden="true"></canvas>
+    </div>
+    <div class="bar">
+      <div id="tray" aria-label="Data centres to place"><div class="slot full"></div><div class="slot full"></div><div class="slot full"></div><div class="slot full"></div><div class="slot full"></div></div>
+      <button id="about" class="round" type="button" aria-label="About this simulation"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg></button>
+      <button id="reset" class="round" type="button" aria-label="Reset map"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/></svg></button>
+    </div>
+  </div>
+
+  <aside aria-label="Information">
+    <header>
+      <h1>The Hidden Cost of AI</h1>
+      <p class="q">Who lives with the consequences?</p>
+    </header>
+
+    <section aria-live="polite">
+      <h2>On this map</h2>
+      <dl class="stats">
+        <div><dt><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="#5b6270" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="14" height="5.5" rx="1.2"/><rect x="3" y="11.5" width="14" height="5.5" rx="1.2"/><path d="M6 5.75h.01M6 14.25h.01"/></svg>Data centres</dt><dd id="st-n">0 / 5</dd></div>
+        <div><dt><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="#c9a200" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 2 4 11h5l-1 7 7-9h-5z"/></svg>Electricity</dt><dd id="st-power">–</dd></div>
+        <div><dt><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="#2f8fc4" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5S4.5 8.6 4.5 12a5.5 5.5 0 0 0 11 0C15.5 8.6 10 2.5 10 2.5z"/></svg>Cooling water</dt><dd id="st-water">–</dd></div>
+        <div><dt><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="#d97a10" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 2.5h10v15l-2-1.3-1.5 1.3-1.5-1.3-1.5 1.3L7 16.2 5 17.5z"/><path d="M8 7h4M8 10.5h4"/></svg>Power bills ◇</dt><dd id="st-bill">–</dd></div>
+        <div><dt><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="#f0600f" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8v4h3l4 3.5v-11l-4 3.5z"/><path d="M13.5 7.5a3.5 3.5 0 0 1 0 5M15.8 5.2a6.8 6.8 0 0 1 0 9.6"/></svg>Noise ◇</dt><dd id="st-noise">–</dd></div>
+        <div><dt><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="#5f606b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7.5h9a2.5 2.5 0 1 0-2.5-2.5M2.5 11h12.5a2.5 2.5 0 1 1-2.5 2.5M2.5 14.5h6"/></svg>Air ◇</dt><dd id="st-air">–</dd></div>
+        <div><dt><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="#3d9fd1" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 7c2.5-2 5-2 7.5 0s5 2 7.5 0M2.5 11.5c2.5-2 5-2 7.5 0s5 2 7.5 0M2.5 16c2.5-2 5-2 7.5 0s5 2 7.5 0"/></svg>Lake &amp; river ◇</dt><dd id="st-lake">–</dd></div>
+        <div><dt><svg class="ic" viewBox="0 0 20 20" fill="none" stroke="#c8389a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2.5 5.5 9h2.5L5 13.5h10L12 9h2.5z"/><path d="M10 13.5v4"/><path d="M3 3l14 14"/></svg>Land</dt><dd id="st-land">–</dd></div>
+      </dl>
+    </section>
+
+    <section>
+      <h2>Energy</h2>
+      <div class="big">
+        <div><span class="n">≈ 0.3 Wh</span><span class="t">1 prompt</span></div>
+        <div><span class="n">≈ 100–150 MW</span><span class="t">1 data centre · ≈ 2.4 GWh/day</span></div>
+      </div>
+      <p class="punch">A data centre uses the energy of your prompt in <b>0.01 milliseconds</b>.</p>
+      <div class="dotkey"><span><i class="d-dc"></i><b>8,000 dots</b> = 1 data centre · 1 day</span><span><i class="d-pr"></i><b>1 dot</b> = 1 million prompts</span></div>
+      <div class="chart dots" id="gap-chart"></div>
+      <p class="cap">Your prompt = one millionth of the yellow dot</p>
+    </section>
+
+    <section>
+      <h2>Global</h2>
+      <div class="facts">
+        <div><span class="n">≈ 155 TWh</span><span class="t">AI data centres · 2025</span></div>
+        <div><span class="n">≈ 945 TWh</span><span class="t">all data centres · 2030 (forecast)</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>AI electricity: who?</h2>
+      <div class="split" role="img" aria-label="Chat prompts by individuals about 2 percent; companies, training and undisclosed use about 98 percent">
+        <div class="known" data-tip="Chat prompts ≈ 3.7 TWh/year of 155 TWh (2025)"></div>
+        <div class="unk" data-tip="Training, images, video, feeds, ads, business AI · not disclosed"></div>
+      </div>
+      <div class="splitlab"><span><b>≈ 2 %</b> individuals (prompts)</span><span><b>≈ 98 %</b> companies · training · unknown</span></div>
+    </section>
+
+    <section>
+      <h2>Local</h2>
+      <div class="facts">
+        <div><span class="n">&gt; 20 %</span><span class="t">Ireland · electricity to data centres</span></div>
+        <div><span class="n">≈ 25 %</span><span class="t">Virginia · electricity to data centres</span></div>
+      </div>
+    </section>
+
+    <p class="foot">≈ estimate · ◇ model assumption</p>
+  </aside>
+</div>
+<div id="intro" role="dialog" aria-modal="true" aria-labelledby="intro-title">
+  <div class="intro-card">
+    <h1 id="intro-title">The Hidden Cost of AI</h1>
+    <p class="how"><b>How it works:</b> drag up to 5 data centres onto the map · watch the effects unfold · move or remove them</p>
+    <button id="start" type="button">Start</button>
+  </div>
+</div>
+<div id="ghost" hidden></div>
+<div id="tip" hidden></div>
+<svg id="sk" viewBox="0 0 1200 800" aria-hidden="true"></svg>
+
+<script>
+
+(() => {
+function buildBase(cv) {
+const W = 1200, H = 800, S = 3;
+const NS = "http://www.w3.org/2000/svg";
+const sk = document.getElementById("sk");
+const el = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); sk.appendChild(e); return e; };
+const pt = (x, y) => { const p = sk.createSVGPoint(); p.x = x; p.y = y; return p; };
+const inFill = (e, x, y) => { try { return e.isPointInFill(pt(x, y)); } catch (_) { return false; } };
+const mk = s => () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const smoothPath = p => { const n = p.length; let d = `M ${p[0][0].toFixed(1)} ${p[0][1].toFixed(1)}`;
+  for (let i = 0; i < n; i++) { const p0 = p[(i + n - 1) % n], p1 = p[i], p2 = p[(i + 1) % n], p3 = p[(i + 2) % n];
+    d += ` C ${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)} ${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(1)}, ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)} ${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(1)}, ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`; }
+  return d + " Z"; };
+
+/* ---------- Phase 1: rebuild the approved sketch composition (same seed and order) ---------- */
+const rnd = mk(11);
+const blob = (cx, cy, rx, ry, irr, n = 14) => {
+  let r = Array.from({ length: n }, () => 1 + (rnd() * 2 - 1) * irr);
+  r = r.map((v, i) => (v * 2 + r[(i + 1) % n] + r[(i + n - 1) % n]) / 4);
+  return smoothPath(r.map((v, i) => { const a = i / n * Math.PI * 2; return [cx + Math.cos(a) * rx * v, cy + Math.sin(a) * ry * v]; }));
+};
+const rpaths = [
+  ["M -10 150 C 80 130, 150 200, 212 238", 22],
+  ["M 322 330 C 350 420, 430 470, 520 520 C 600 565, 700 610, 800 615", 22],
+  ["M 800 615 C 880 590, 960 570, 1040 530 C 1110 495, 1160 500, 1215 470", 15],
+  ["M 800 615 C 870 670, 950 705, 1040 712 C 1110 720, 1160 760, 1215 785", 15],
+  ["M 790 -10 C 780 90, 830 200, 860 300 C 890 400, 930 480, 990 552", 11]
+];
+const riverEls = rpaths.map(([d, w]) => el("path", { d, fill: "none", stroke: "#000", "stroke-width": w, "stroke-linecap": "round" }));
+const oldLake = el("path", { d: blob(300, 262, 112, 78, 0.28, 12) });
+const inWaterOld = (x, y, pad = 26) => { if (inFill(oldLake, x, y)) return true;
+  for (const r of riverEls) { const w = +r.getAttribute("stroke-width"); r.setAttribute("stroke-width", w + pad);
+    let hit = false; try { hit = r.isPointInStroke(pt(x, y)); } catch (_) {} r.setAttribute("stroke-width", w); if (hit) return true; }
+  return false; };
+const farms = [
+  { cx: 115, cy: 470, rx: 105, ry: 150, rot: -12 },
+  { cx: 1025, cy: 690, rx: 175, ry: 92, rot: 8 }
+];
+const farmDs = [], parcels = [];
+farms.forEach(f => {
+  const d = blob(f.cx, f.cy, f.rx, f.ry, 0.22, 10); farmDs.push(d); const zone = el("path", { d });
+  const a = f.rot * Math.PI / 180, cw = 38, ch = 24;
+  for (let u = -f.rx * 1.6; u < f.rx * 1.6; u += cw) for (let v = -f.ry * 1.6; v < f.ry * 1.6; v += ch) {
+    const w = cw * (0.6 + rnd() * 0.9), h = ch;
+    const mx = f.cx + Math.cos(a) * (u + w/2) - Math.sin(a) * (v + h/2), my = f.cy + Math.sin(a) * (u + w/2) + Math.cos(a) * (v + h/2);
+    if (!inFill(zone, mx, my) || inWaterOld(mx, my, 14)) continue;
+    const x = f.cx + Math.cos(a) * u - Math.sin(a) * v, y = f.cy + Math.sin(a) * u + Math.cos(a) * v;
+    rnd(); parcels.push({ x, y, w: w - 3, h: h - 3, rot: f.rot, mx, my });
+  }
+});
+const forests = [
+  { cx: 1000, cy: 185, rx: 185, ry: 135, irr: 0.3, n: 520 },
+  { cx: 640, cy: 120, rx: 70, ry: 45, irr: 0.35, n: 70 },
+  { cx: 1125, cy: 395, rx: 55, ry: 70, irr: 0.35, n: 60 },
+  { cx: 180, cy: 715, rx: 85, ry: 50, irr: 0.35, n: 80 },
+  { cx: 640, cy: 735, rx: 60, ry: 38, irr: 0.4, n: 45 }
+];
+const forestDs = [];
+forests.forEach(f => {
+  const d = blob(f.cx, f.cy, f.rx, f.ry, f.irr, 13); forestDs.push(d); const zone = el("path", { d });
+  let placed = 0, tries = 0;
+  while (placed < f.n && tries++ < f.n * 25) {
+    const x = f.cx + (rnd() * 2 - 1) * f.rx * 1.3, y = f.cy + (rnd() * 2 - 1) * f.ry * 1.3;
+    if (!inFill(zone, x, y) || inWaterOld(x, y, 18)) continue;
+    rnd(); placed++;
+  }
+});
+const cityC = { cx: 500, cy: 455, rx: 195, ry: 130 };
+const cityD = blob(cityC.cx, cityC.cy, cityC.rx, cityC.ry, 0.32, 13);
+
+/* ---------- Phase 2: map render ---------- */
+const R = mk(2024);
+const pick = a => a[Math.floor(R() * a.length)];
+cv.width = W * S; cv.height = H * S;
+const ctx = cv.getContext("2d"); ctx.scale(S, S); ctx.lineCap = "round"; ctx.lineJoin = "round";
+const hc = document.createElement("canvas").getContext("2d"); hc.lineCap = "round"; hc.lineJoin = "round";
+const inP = (p, x, y) => hc.isPointInPath(p, x, y);
+const nearP = (p, x, y, w) => { hc.lineWidth = w; return hc.isPointInStroke(p, x, y); };
+
+// smooth value noise for terrain, grass and texture
+const NR = mk(77), NG = 256, ngrid = new Float32Array(NG * NG).map(() => NR());
+const vnoise = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const g = (a, b) => ngrid[((b & 255) << 8) + (a & 255)];
+  return (g(xi, yi) * (1 - u) + g(xi + 1, yi) * u) * (1 - v) + (g(xi, yi + 1) * (1 - u) + g(xi + 1, yi + 1) * u) * v; };
+const fbm = (x, y, oct = 5) => { let s = 0, a = .5, f = 1, n = 0; for (let i = 0; i < oct; i++) { s += a * vnoise(x * f, y * f); n += a; a *= .5; f *= 2.03; } return s / n; };
+const bitmap = (w, h, fn) => { const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d"), id = g.createImageData(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const p = fn(x, y), i = (y * w + x) * 4; id.data[i] = p[0]; id.data[i + 1] = p[1]; id.data[i + 2] = p[2]; id.data[i + 3] = p[3] ?? 255; }
+  g.putImageData(id, 0, 0); return c; };
+
+// organic lake: layered harmonics, re-rolled until it still receives and releases the river
+let lakeD, lakeP;
+for (let s = 1; s < 200; s++) {
+  const r = mk(500 + s), n = 28, ph = [r() * 6.28, r() * 6.28, r() * 6.28, r() * 6.28];
+  let rad = Array.from({ length: n }, (_, i) => { const a = i / n * Math.PI * 2;
+    return 1 + 0.17 * Math.sin(2 * a + ph[0]) + 0.12 * Math.sin(3 * a + ph[1]) + 0.08 * Math.sin(5 * a + ph[2]) + 0.05 * Math.sin(8 * a + ph[3]) + (r() * 2 - 1) * 0.05; });
+  rad = rad.map((v, i) => (v * 2 + rad[(i + 1) % n] + rad[(i + n - 1) % n]) / 4);
+  const d = smoothPath(rad.map((v, i) => { const a = i / n * Math.PI * 2; return [300 + Math.cos(a) * 118 * v, 262 + Math.sin(a) * 80 * v]; }));
+  const p = new Path2D(d);
+  if (inP(p, 214, 240) && inP(p, 321, 326) && !inP(p, 420, 380)) { lakeD = d; lakeP = p; break; }
+}
+
+const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
+const warp = (d, amp, freq, so) => { const e = el("path", { d }), L = e.getTotalLength(), n = Math.max(40, Math.round(L / 3)), pts = [];
+  for (let i = 0; i < n; i++) pts.push(e.getPointAtLength(i / n * L));
+  const out = pts.map((q, i) => { const a = pts[(i + n - 1) % n], b = pts[(i + 1) % n]; let nx = -(b.y - a.y), ny = b.x - a.x; const l = Math.hypot(nx, ny) || 1;
+    const k = clampN((fbm(q.x / freq + so, q.y / freq + so * 2, 4) - .5) * 5, -1, 1) * amp; return [q.x + nx / l * k, q.y + ny / l * k]; });
+  e.remove(); return smoothPath(out); };
+const riverP = rpaths.map(([d, w]) => ({ p: new Path2D(d), w }));
+lakeD = warp(lakeD, 10, 28, 21); lakeP = new Path2D(lakeD);
+const lakeEl = el("path", { d: lakeD });
+const farmP = farmDs.map((d, i) => new Path2D(warp(d, 12, 45, 3 + i)));
+const forestDsW = forestDs.map((d, i) => warp(d, 20, 30, 7 + i));
+const forestP = forestDsW.map(d => new Path2D(d));
+const forestEls = forestDsW.map(d => el("path", { d }));
+const cityP = new Path2D(warp(cityD, 16, 38, 13));
+const riverSegs = riverEls.map((e, i) => { const w = rpaths[i][1], L = e.getTotalLength(), pts = [];
+  for (let s = 0; s <= L; s += 2) { const q = e.getPointAtLength(s); pts.push({ x: q.x, y: q.y, w: w * (.62 + .8 * fbm(q.x / 45 + 30, q.y / 45, 3)), b: 2 + 4 * fbm(q.x / 20, q.y / 20 + 50, 2) }); }
+  return pts; });
+const strokeRiver = (g, pts, f, col) => { g.strokeStyle = col; for (let i = 1; i < pts.length; i++) { g.lineWidth = f(pts[i]); g.beginPath(); g.moveTo(pts[i - 1].x, pts[i - 1].y); g.lineTo(pts[i].x, pts[i].y); g.stroke(); } };
+const roads = [
+  ["M -10 600 C 120 590, 230 560, 330 520 C 420 480, 560 450, 700 440 C 820 432, 950 450, 1210 430", 4.4],
+  ["M 520 -10 C 525 110, 505 230, 500 340 C 495 430, 520 520, 565 600 C 610 680, 625 740, 640 810", 4.4],
+  ["M 700 440 C 750 520, 790 600, 860 690 C 900 740, 930 775, 960 810", 3.6],
+  ["M 330 520 C 250 470, 180 430, 100 410 C 50 400, 20 395, -10 392", 3.4],
+  ["M 700 440 C 760 370, 820 310, 900 265 C 990 215, 1090 215, 1210 190", 3.8]
+].map(([d, w]) => ({ p: new Path2D(d), w }));
+
+const inWater = (x, y, pad = 0) => inP(lakeP, x, y) || (pad > 0 && nearP(lakeP, x, y, pad * 2)) || riverP.some(r => nearP(r.p, x, y, r.w + pad * 2));
+const nearRoad = (x, y, pad = 0) => roads.some(r => nearP(r.p, x, y, r.w + pad * 2));
+const inFarm = (x, y) => farmP.some(p => inP(p, x, y));
+const inForest = (x, y) => forestP.some(p => inP(p, x, y));
+const inCity = (x, y) => inP(cityP, x, y);
+const cityNorm = (x, y) => Math.hypot((x - cityC.cx) / cityC.rx, (y - cityC.cy) / cityC.ry);
+
+/* ---------- cartographic style: flat land-use colours, cased roads, building footprints ---------- */
+const MAP = { land: "#eceee3", meadow: "#dcebc9", farm: "#f3efda", fieldLine: "#ddd5b6", forest: "#c3deb0", forestEdge: "#a9cd94", tree: "#a9cf93",
+  water: "#a4d3e8", waterEdge: "#8cc2dc", resi: "#e8e5df", block: "#e1ddd6", bldg: "#d7d1c9", bldgEdge: "#c1bab0", park: "#c9e7b9",
+  street: "#ffffff", streetCase: "#d4cfc6", primary: "#fcd88a", primaryCase: "#e3b45f", secondary: "#fff6d8", secondaryCase: "#d8c48f" };
+
+/* generation first (same rules as the realistic map), drawing after */
+const th = -0.13, cth = Math.cos(th), sth = Math.sin(th);
+const toW = (u, v) => [cityC.cx + u * cth - v * sth, cityC.cy + u * sth + v * cth];
+const blocks = [], bld = [], parks = [];
+const BW = 21, BH = 16, ST = 3.2;
+for (let u = -310; u < 310; u += BW + ST) for (let v = -210; v < 210; v += BH + ST) {
+  const [wx, wy] = toW(u + BW / 2, v + BH / 2);
+  if (!inCity(wx, wy)) continue;
+  const corners = [[u, v], [u + BW, v], [u, v + BH], [u + BW, v + BH]].map(([a, b]) => toW(a, b));
+  if (corners.some(([x, y]) => inWater(x, y, 2.5) || nearRoad(x, y, 1.2))) continue;
+  const d = cityNorm(wx, wy);
+  if (R() < Math.max(0, d - 0.75) * 1.2) continue;
+  blocks.push([u, v]);
+  if (R() < 0.07) { parks.push([u, v]); continue; }
+  if (d < 0.38 && R() < 0.3) { bld.push({ x: u + 2, y: v + 2, w: BW - 4 - R() * 4, h: BH - 4 - R() * 3, tall: true }); continue; }
+  const dp = 4.2 + R() * 1.3;
+  for (const yy of [v + .6, v + BH - .6 - dp]) { let x = u + .6; while (x < u + BW - 1.4) { const sw = Math.min(u + BW - .6 - x, 3.5 + R() * 5); if (R() > .05 + d * .3) bld.push({ x, y: yy, w: sw - .35, h: dp }); x += sw; } }
+  for (const xx of [u + .6, u + BW - .6 - dp]) { let y = v + .6 + dp; while (y < v + BH - .6 - dp - .5) { const sh = Math.min(v + BH - .6 - dp - y, 3 + R() * 4); if (R() > .05 + d * .3) bld.push({ x: xx, y, w: dp, h: sh - .35 }); y += sh; } }
+}
+const clusters = [[-120, -35], [-35, 45], [45, 150]];
+const occ = new Set(), cell = (x, y) => `${Math.round(x / 5)},${Math.round(y / 5)}`;
+const houses = [], lanes = [];
+const okHouse = (x, y) => x > 6 && x < W - 6 && y > 6 && y < H - 6 && !inCity(x, y) && !inWater(x, y, 3) && !inForest(x, y) && !inFarm(x, y) && !nearRoad(x, y, 2.5) && !occ.has(cell(x, y));
+const ringPt = (a, k) => [cityC.cx + Math.cos(a) * cityC.rx * k, cityC.cy + Math.sin(a) * cityC.ry * k];
+const queue = [];
+clusters.forEach(([a0, a1]) => { const n = Math.round((a1 - a0) / 8);
+  for (let i = 0; i < n; i++) { const a = (a0 + (i + R()) * (a1 - a0) / n) * Math.PI / 180; queue.push([...ringPt(a, .7), a + (R() - .5) * .5, 50 + R() * 90, 0]); } });
+while (queue.length) {
+  let [x, y, hd, len, depth] = queue.shift(), turn = (R() - .5) * .05, seg = [], guard = 0;
+  while (inCity(x, y) && guard++ < 80) { x += Math.cos(hd) * 3; y += Math.sin(hd) * 3; }
+  for (let s = 0; s < len; s += 3) {
+    turn = clampN(turn + (R() - .5) * .025, -.055, .055); hd += turn; x += Math.cos(hd) * 3; y += Math.sin(hd) * 3;
+    if (x < 4 || x > W - 4 || y < 4 || y > H - 4 || inWater(x, y, 1.5) || inForest(x, y) || inFarm(x, y) || inCity(x, y) || cityNorm(x, y) > 1.95) break;
+    seg.push([x, y]);
+    if (depth < 2 && s > 12 && R() < .06) queue.push([x, y, hd + (R() < .5 ? 1 : -1) * (1.3 + R() * .5), 18 + R() * 45, depth + 1]);
+  }
+  if (seg.length > 3) lanes.push(seg);
+}
+lanes.forEach(seg => { for (let i = 1; i < seg.length; i++) {
+  const [x0, y0] = seg[i - 1], [x1, y1] = seg[i], L = Math.hypot(x1 - x0, y1 - y0), ang = Math.atan2(y1 - y0, x1 - x0), nx = -Math.sin(ang), ny = Math.cos(ang);
+  for (let t = 0; t < L; t += 7.5) for (const s of [-1, 1]) {
+    if (R() < 0.3) continue;
+    const x = x0 + (x1 - x0) * t / L + nx * s * 5.2, y = y0 + (y1 - y0) * t / L + ny * s * 5.2;
+    if (!okHouse(x, y) || cityNorm(x, y) > 1.85) continue;
+    occ.add(cell(x, y)); houses.push({ x, y, ang, w: 4.6 + R() * 1.6, h: 3.4 + R() * 1 });
+  } } });
+
+/* 1. land and meadows */
+ctx.fillStyle = MAP.land; ctx.fillRect(0, 0, W, H);
+ctx.drawImage(bitmap(300, 200, (x, y) => { const v = fbm(x / 40 + 5, y / 40, 4); return v > .53 ? [220, 235, 201, Math.min(255, (v - .53) * 2400)] : [0, 0, 0, 0]; }), 0, 0, W, H);
+ctx.save(); ctx.globalAlpha = .045;
+ctx.drawImage(bitmap(300, 200, (x, y) => { const h = (a, b) => fbm(a / 42, b / 42, 4), s = (h(x - 1, y - 1) - h(x + 1, y + 1)) * 5;
+  return s > 0 ? [255, 255, 255, Math.min(255, s * 600)] : [90, 100, 80, Math.min(255, -s * 600)]; }), 0, 0, W, H);
+ctx.restore();
+
+/* 2. farmland: pale fields with thin boundaries */
+farmP.forEach(p => { ctx.fillStyle = MAP.farm; ctx.fill(p); ctx.strokeStyle = MAP.fieldLine; ctx.lineWidth = .8; ctx.stroke(p); });
+const FIELDS = ["#f3eed6", "#eee8c9", "#e9eecf", "#f5f0dc", "#ebe5c4"];
+parcels.filter(f => farmP.some(q => inP(q, f.mx, f.my))).forEach(f => {
+  ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(f.rot * Math.PI / 180);
+  ctx.fillStyle = pick(FIELDS); ctx.fillRect(0, 0, f.w, f.h);
+  ctx.strokeStyle = MAP.fieldLine; ctx.lineWidth = .5; ctx.strokeRect(0, 0, f.w, f.h);
+  ctx.restore(); });
+
+/* 3. forests: flat green with small tree symbols */
+forestP.forEach((p, fi) => {
+  ctx.fillStyle = MAP.forest; ctx.fill(p);
+  ctx.save(); ctx.clip(p); const bb = forestEls[fi].getBBox();
+  ctx.fillStyle = MAP.tree;
+  for (let y = bb.y; y < bb.y + bb.height; y += 7) for (let x = bb.x + ((y / 7) % 2) * 3.5; x < bb.x + bb.width; x += 7) {
+    const tx = x + (R() - .5) * 2, ty = y + (R() - .5) * 2; ctx.beginPath(); ctx.arc(tx, ty, 1.25, 0, 7); ctx.fill(); }
+  ctx.restore();
+  ctx.strokeStyle = MAP.forestEdge; ctx.lineWidth = .8; ctx.stroke(p);
+});
+
+/* 4. residential areas */
+ctx.fillStyle = MAP.resi; ctx.fill(cityP);
+ctx.save(); ctx.strokeStyle = MAP.resi; ctx.lineWidth = 20;
+lanes.forEach(seg => { ctx.beginPath(); seg.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); });
+ctx.restore();
+
+/* 5. water */
+const drawRiverFill = (g, pts, f, col) => { g.fillStyle = col; pts.forEach(q => { g.beginPath(); g.arc(q.x, q.y, f(q) / 2, 0, 7); g.fill(); }); };
+riverSegs.forEach(pts => drawRiverFill(ctx, pts, q => q.w + 1.4, MAP.waterEdge));
+ctx.fillStyle = MAP.waterEdge; ctx.save(); ctx.lineWidth = 1.4; ctx.strokeStyle = MAP.waterEdge; ctx.stroke(lakeP); ctx.restore();
+riverSegs.forEach(pts => drawRiverFill(ctx, pts, q => q.w, MAP.water));
+ctx.fillStyle = MAP.water; ctx.fill(lakeP);
+
+/* 6. streets: outskirts lanes, city grid, then main roads on top */
+ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round";
+const laneStroke = (w, c) => { ctx.lineWidth = w; ctx.strokeStyle = c; lanes.forEach(seg => { ctx.beginPath(); seg.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke(); }); };
+laneStroke(2.6, MAP.streetCase); laneStroke(1.8, MAP.street);
+ctx.restore();
+ctx.save(); ctx.translate(cityC.cx, cityC.cy); ctx.rotate(th);
+ctx.fillStyle = MAP.streetCase; blocks.forEach(([u, v]) => ctx.fillRect(u - ST / 2 - .5, v - ST / 2 - .5, BW + ST + 1, BH + ST + 1));
+ctx.fillStyle = MAP.street; blocks.forEach(([u, v]) => ctx.fillRect(u - ST / 2, v - ST / 2, BW + ST, BH + ST));
+blocks.forEach(([u, v]) => { ctx.fillStyle = MAP.block; ctx.fillRect(u, v, BW, BH); });
+parks.forEach(([u, v]) => { ctx.fillStyle = MAP.park; ctx.fillRect(u, v, BW, BH); });
+bld.forEach(b => { ctx.fillStyle = b.tall ? "#cfc8be" : MAP.bldg; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = MAP.bldgEdge; ctx.lineWidth = .35; ctx.strokeRect(b.x, b.y, b.w, b.h); });
+ctx.restore();
+houses.forEach(h => { ctx.save(); ctx.translate(h.x, h.y); ctx.rotate(h.ang);
+  ctx.fillStyle = MAP.bldg; ctx.fillRect(-h.w / 2, -h.h / 2, h.w, h.h); ctx.strokeStyle = MAP.bldgEdge; ctx.lineWidth = .35; ctx.strokeRect(-h.w / 2, -h.h / 2, h.w, h.h);
+  ctx.restore(); });
+roads.forEach((r, i) => { ctx.lineWidth = r.w + 1.8; ctx.strokeStyle = i < 2 ? MAP.primaryCase : MAP.secondaryCase; ctx.stroke(r.p); });
+roads.forEach((r, i) => { ctx.lineWidth = r.w; ctx.strokeStyle = i < 2 ? MAP.primary : MAP.secondary; ctx.stroke(r.p); });
+
+/* 7. a few single trees as small dots, like park trees on a map */
+for (let i = 0, n = 0; i < 4000 && n < 70; i++) { const x = 10 + R() * (W - 20), y = 10 + R() * (H - 20);
+  if (inWater(x, y, 4) || inForest(x, y) || inFarm(x, y) || inCity(x, y) || nearRoad(x, y, 3) || cityNorm(x, y) < 1.9) continue;
+  ctx.fillStyle = "#b6d8a0"; ctx.beginPath(); ctx.arc(x, y, 2.2, 0, 7); ctx.fill(); ctx.strokeStyle = "#9cc785"; ctx.lineWidth = .5; ctx.stroke(); n++; }
+
+const homes = houses.map(h => ({ x: h.x, y: h.y })).concat(bld.filter((_, i) => i % 3 === 0).map(b => { const [x, y] = toW(b.x + b.w / 2, b.y + b.h / 2); return { x, y }; }));
+const lb = lakeEl.getBBox();
+return { W, H, MAP, drawRiverFill, lakeP, riverP, riverEls, riverSegs, strokeRiver, lakeEl, roads, forestP, farmP, cityP, inWater, inForest, inCity, cityC, homes, lakeC: { x: lb.x + lb.width / 2, y: lb.y + lb.height / 2 } };
+}
+/* ================= Effects prototype: flowing light fields ================= */
+const B = buildBase(document.getElementById("base"));
+const { W, H } = B;
+const O = 2;
+const fx = document.getElementById("fx"); fx.width = W * O; fx.height = H * O;
+const o = fx.getContext("2d"); o.lineCap = "round"; o.lineJoin = "round";
+const stage = document.getElementById("stage");
+const CUBE = 36, MAX = 5, BUILD = 6;
+const GRID = { x: 1215, y: 300 }, SUB = { x: 735, y: 345 };
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const ease = t => t < 0 ? 0 : t > 1 ? 1 : t * t * (3 - 2 * t);
+const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, t) => { const A = hex(a), Bc = hex(b); return `rgb(${A.map((v, i) => Math.round(v + (Bc[i] - v) * t)).join(",")})`; };
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+let _t = 0; const segD = (x, y, a, b) => { const dx = b.x - a.x, dy = b.y - a.y; _t = clamp(((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy), 0, 1); return Math.hypot(a.x + dx * _t - x, a.y + dy * _t - y); };
+const onSeg = (p, a, b) => { const dx = b.x - a.x, dy = b.y - a.y, t = clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy), 0, 1); return { x: a.x + dx * t, y: a.y + dy * t, t }; };
+
+/* ---------- field grid and masks ---------- */
+const CS = 5, FW = W / CS, FH = H / CS, N = FW * FH;
+const mask = draw => { const c = document.createElement("canvas"); c.width = FW; c.height = FH; const g = c.getContext("2d");
+  g.scale(1 / CS, 1 / CS); g.fillStyle = g.strokeStyle = "#fff"; g.lineCap = "round"; draw(g);
+  const d = g.getImageData(0, 0, FW, FH).data, m = new Float32Array(N); for (let i = 0; i < N; i++) m[i] = d[i * 4 + 3] / 255; return m; };
+const waterM = mask(g => { g.fill(B.lakeP); B.riverP.forEach(r => { g.lineWidth = r.w; g.stroke(r.p); }); });
+const farmM = mask(g => B.farmP.forEach(p => g.fill(p)));
+// distance to water in map units (two-pass chamfer)
+const wd = new Float32Array(N).map((_, i) => waterM[i] > .3 ? 0 : 1e6);
+for (let pass = 0; pass < 2; pass++) for (let k = 0; k < N; k++) {
+  const i = pass ? N - 1 - k : k, x = i % FW, y = (i / FW) | 0, s = pass ? 1 : -1;
+  const nb = [[x + s, y, 1], [x, y + s, 1], [x + s, y + s, 1.414], [x - s, y + s, 1.414]];
+  for (const [a, b, c] of nb) if (a >= 0 && a < FW && b >= 0 && b < FH) wd[i] = Math.min(wd[i], wd[b * FW + a] + c * CS);
+}
+const gridM = new Float32Array(N), dSub = new Float32Array(N);
+for (let i = 0; i < N; i++) { const x = (i % FW) * CS + CS / 2, y = ((i / FW) | 0) * CS + CS / 2;
+  const nrm = Math.hypot((x - B.cityC.cx) / B.cityC.rx, (y - B.cityC.cy) / B.cityC.ry);
+  gridM[i] = Math.max(.22, clamp((2.4 - nrm) / .9, 0, 1)); dSub[i] = Math.hypot(x - SUB.x, y - SUB.y); }
+
+// tileable flow noise
+const T = 256, tex = new Float32Array(T * T);
+(() => { const rnd = (a, b, p, s) => { const h = Math.sin((a % p) * 127.1 + (b % p) * 311.7 + s * 74.7) * 43758.5453; return h - Math.floor(h); };
+  for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) { let v = 0, amp = .5, tot = 0;
+    for (let k = 0; k < 4; k++) { const p = 4 << k, c = T / p, gx = x / c, gy = y / c, xi = Math.floor(gx), yi = Math.floor(gy), u = gx - xi, w = gy - yi, su = u * u * (3 - 2 * u), sw = w * w * (3 - 2 * w);
+      const n = (rnd(xi, yi, p, k) * (1 - su) + rnd(xi + 1, yi, p, k) * su) * (1 - sw) + (rnd(xi, yi + 1, p, k) * (1 - su) + rnd(xi + 1, yi + 1, p, k) * su) * sw;
+      v += n * amp; tot += amp; amp *= .5; }
+    tex[y * T + x] = v / tot; } })();
+const nz = (x, y) => tex[(((y | 0) & 255) << 8) + ((x | 0) & 255)];
+
+const fieldC = document.createElement("canvas"); fieldC.width = FW; fieldC.height = FH;
+const fctx = fieldC.getContext("2d"), fimg = fctx.createImageData(FW, FH);
+const midC = document.createElement("canvas"); midC.width = FW * 3; midC.height = FH * 3;
+const mctx = midC.getContext("2d"); mctx.imageSmoothingQuality = "high";
+const canBlur = "filter" in mctx;
+
+// mud for exposed river and lake beds
+const mudPat = (() => { const c = document.createElement("canvas"); c.width = c.height = 120; const g = c.getContext("2d");
+  g.fillStyle = "#a8977a"; g.fillRect(0, 0, 120, 120);
+  for (let i = 0; i < 900; i++) { g.fillStyle = ["#9a8a6e", "#b6a687", "#8f7f64", "#c0b193"][i % 4]; g.globalAlpha = .5; g.fillRect(Math.random() * 120, Math.random() * 120, 1 + Math.random() * 2, 1 + Math.random() * 2); }
+  g.globalAlpha = .35; g.strokeStyle = "#7d6e55"; g.lineWidth = .6;
+  for (let i = 0; i < 18; i++) { let x = Math.random() * 120, y = Math.random() * 120; g.beginPath(); g.moveTo(x, y);
+    for (let k = 0; k < 4; k++) { x += (Math.random() - .5) * 22; y += (Math.random() - .5) * 22; g.lineTo(x, y); } g.stroke(); }
+  return o.createPattern(c, "repeat"); })();
+
+const waterPts = [];
+[...B.riverEls, B.lakeEl].forEach(e => { const L = e.getTotalLength(); for (let s = 0; s < L; s += 6) { const p = e.getPointAtLength(s); if (p.x > 0 && p.x < W && p.y > 0 && p.y < H) waterPts.push({ x: p.x, y: p.y }); } });
+
+const billHomes = (() => {
+  const cand = B.homes.filter((h, i) => i % 2 === 0), out = [{ x: B.cityC.cx, y: B.cityC.cy }], picks = [];
+  while (picks.length < 7) { let best = null, bd = -1;
+    for (const h of cand) { if (h.x < 60 || h.x > W - 90 || h.y < 40 || h.y > H - 30) continue; const d = Math.min(...out.map(p => dist(p, h))); if (d > bd) { bd = d; best = h; } }
+    if (!best) break; picks.push(best); out.push(best); }
+  return picks; })();
+
+/* ---------- state ---------- */
+let sites = [], water = 0, bill = 0, elec = 0, trunkAge = 0, time = 0, flicker = 0;
+const alive = () => sites.filter(s => s.alive);
+const NR = 190;   // noise reach in open land (map units)
+
+function makeSite(x, y) {
+  const reach = [];
+  for (let i = 0; i < 72; i++) { const a = i / 72 * Math.PI * 2; let left = NR, r = CUBE / 2;
+    while (r < left) { if (B.inForest(x + Math.cos(a) * r, y + Math.sin(a) * r)) left -= 2.4 * 5; r += 5; }
+    reach.push(Math.max(CUBE / 2 + 10, Math.min(left, NR))); }
+  let wp = waterPts[0], wdd = 1e9; for (const p of waterPts) { const d = Math.hypot(p.x - x, p.y - y); if (d < wdd) { wdd = d; wp = p; } }
+  const noiseHomes = [], airHomes = [];
+  B.homes.forEach((h, i) => { const dx = h.x - x, dy = h.y - y, d = Math.hypot(dx, dy);
+    if (d > CUBE * .7 && d < reach[Math.round(((Math.atan2(dy, dx) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * 72) % 72]) noiseHomes.push(i);
+    if (dx > 0 && dx < 600 && Math.abs(dy) < 24 + dx * .3) airHomes.push(i); });
+  const clear = []; for (let i = 0; i < 30; i++) { const a = i / 30 * Math.PI * 2, r = 62 * (.78 + .5 * nz(x * .3 + Math.cos(a) * 30, y * .3 + Math.sin(a) * 30)); clear.push([Math.cos(a) * r, Math.sin(a) * r]); }
+  return { x, y, clear, alive: true, age: 0, load: 0, noise: 0, bldg: 0, reach, noiseHomes, airHomes, water: wp, tap: onSeg({ x, y }, GRID, SUB), lineAge: 0 };
+}
+const canPlace = (x, y) => {
+  if (x < 30 || x > W - 30 || y < 30 || y > H - 30) return false;
+  for (const dx of [-20, 0, 20]) for (const dy of [-20, 0, 20]) if (B.inWater(x + dx, y + dy, 1)) return false;
+  return !alive().some(s => Math.abs(s.x - x) < CUBE + 4 && Math.abs(s.y - y) < CUBE + 4);
+};
+
+/* ---------- the light field ---------- */
+const COL = { elec: [246, 226, 72], strain: [255, 150, 60], water: [70, 200, 235], dry: [222, 160, 60], noise: [255, 140, 50], air: [96, 96, 108], land: [215, 70, 170] };
+function computeField(strain) {
+  const d = fimg.data, live = sites.filter(s => s.load > .01 || s.noise > .01);
+  const lines = [[GRID, SUB, ease(trunkAge) * elec]].concat(sites.filter(s => s.load > 0).map(s => [s.tap, s, ease(s.load) * ease(s.lineAge)]));
+  const eCol = strain ? COL.strain : COL.elec;
+  for (let j = 0; j < FH; j++) for (let i = 0; i < FW; i++) {
+    const k = j * FW + i, x = i * CS + CS / 2, y = j * CS + CS / 2;
+    let r = 0, g = 0, b = 0, A = 0;
+    const add = (c, a) => { if (a <= 0.004) return; a = Math.min(a, .8); r = c[0] * a + r * (1 - a); g = c[1] * a + g * (1 - a); b = c[2] * a + b * (1 - a); A = a + A * (1 - a); };
+    // water: waterways tint and farmland dries
+    if (water > .004) {
+      const flow = nz(x * .5 - time * 9, y * .5 + time * 2);
+      add(COL.dry, farmM[k] * water * (.55 + .5 * nz(x * .35, y * .35)) * .7);
+      add(COL.water, water * Math.exp(-wd[k] / 30) * (.55 + .8 * (flow - .5) + .25) * .85);
+    }
+    // electricity: the whole grid area, waves rolling out from the substation
+    if (elec > .004) {
+      const wave = .6 + .4 * Math.sin(dSub[k] * .03 - time * 1.7) + (nz(x * .4 + time * 6, y * .4) - .5) * .5;
+      let e = elec * gridM[k] * wave * .5;
+      for (const [a, s, lv] of lines) { if (lv <= 0) continue; const dd = segD(x, y, a, s); if (dd < 22) e = Math.max(e, lv * (1 - dd / 22) * (.7 + .3 * Math.sin(_t * 40 - time * 6))); }
+      add(eCol, e);
+    }
+    for (const s of live) {
+      const dx = x - s.x, dy = y - s.y, dd = Math.hypot(dx, dy);
+      // land: scar around every site, lasting
+      if (dd < 95) add(COL.land, (1 - clamp((dd - 40) / 55, 0, 1)) * ease(s.age) * (s.alive ? .5 : .35));
+      // supply stream from the nearest water
+      if (s.load > 0) { const q = segD(x, y, s.water, s);
+        if (q < 14) add(COL.water, ease(s.load) * (1 - q / 14) * .35); }
+      // noise: rippling field, cut short by forest
+      if (s.noise > .01 && dd < NR) { const a = (Math.atan2(dy, dx) + Math.PI * 2) % (Math.PI * 2), rr = s.reach[Math.round(a / (Math.PI * 2) * 72) % 72] * ease(s.noise);
+        if (dd < rr) { const f = 1 - dd / rr; add(COL.noise, Math.pow(f, .7) * (.62 + .38 * Math.sin(dd * .085 - time * 3.2)) * s.noise * .62); } }
+      // air: a meandering plume carried east by the wind
+      if (s.load > .01 && dx > -30) { const u = Math.max(dx, 0), mid = 22 * Math.sin(u * .011 - time * .6) + (nz(u * .35 - time * 9, s.y * .2) - .5) * 60, wdt = 30 + u * .38;
+        const v = dy - mid, a = ease(s.load) * Math.exp(-(v * v) / (wdt * wdt)) * Math.exp(-u / 1000) * (dx < 0 ? Math.exp(dx / 14) : 1) * (.55 + .9 * (nz(x * .6 - time * 14, y * .6) - .5) + .2);
+        add(COL.air, a * 1.05); }
+    }
+    const p = k * 4;
+    if (A > 0) { d[p] = r / A; d[p + 1] = g / A; d[p + 2] = b / A; d[p + 3] = A * 255; } else d[p + 3] = 0;
+  }
+  fctx.putImageData(fimg, 0, 0);
+  mctx.clearRect(0, 0, midC.width, midC.height);
+  if (canBlur) mctx.filter = "blur(3px)";
+  mctx.drawImage(fieldC, 0, 0, midC.width, midC.height);
+  if (canBlur) mctx.filter = "none";
+}
+
+/* ---------- physical changes on the map (cartographic style) ---------- */
+const M = B.MAP;
+function drawWater(dw) {
+  if (dw < 0.004) return;
+  const bed = "#e7dcbf", wcol = mix("#a4d3e8", "#b9cdbf", Math.min(1, dw * 1.1));
+  B.riverSegs.forEach(pts => B.drawRiverFill(o, pts, q => q.w, bed));
+  B.riverSegs.forEach(pts => B.drawRiverFill(o, pts, q => Math.max(1, q.w * (1 - .72 * dw)), wcol));
+  // lake: same place, the shoreline retreats inward and exposes the bed
+  const inset = 34 * dw;
+  o.save(); o.clip(B.lakeP); o.fillStyle = wcol; o.fill(B.lakeP);
+  o.lineWidth = inset * 2 + 1.6; o.strokeStyle = M.waterEdge; o.stroke(B.lakeP);
+  o.lineWidth = inset * 2; o.strokeStyle = bed; o.stroke(B.lakeP);
+  o.globalAlpha = .35; o.lineWidth = inset * 2; o.strokeStyle = mudPat; o.stroke(B.lakeP);
+  o.restore();
+  B.roads.forEach((r, i) => { o.lineWidth = r.w + 1.8; o.strokeStyle = i < 2 ? M.primaryCase : M.secondaryCase; o.stroke(r.p); });
+  B.roads.forEach((r, i) => { o.lineWidth = r.w; o.strokeStyle = i < 2 ? M.primary : M.secondary; o.stroke(r.p); });
+}
+// power line: from the grid entry to the site, current flowing towards the data centre
+function drawPower(a, b, prog, live, strain) {
+  if (prog <= 0) return;
+  const L = dist(a, b), e = { x: a.x + (b.x - a.x) * prog, y: a.y + (b.y - a.y) * prog };
+  o.strokeStyle = "#e3ead3"; o.lineWidth = 8; o.beginPath(); o.moveTo(a.x, a.y); o.lineTo(e.x, e.y); o.stroke();    // cleared corridor
+  o.strokeStyle = "#5d6168"; o.lineWidth = 1.4; o.beginPath(); o.moveTo(a.x, a.y); o.lineTo(e.x, e.y); o.stroke();
+  for (let s = 0; s <= L * prog; s += 20) { const t = s / L; o.fillStyle = "#5d6168"; o.fillRect(a.x + (b.x - a.x) * t - 1.6, a.y + (b.y - a.y) * t - 1.6, 3.2, 3.2); }
+  if (live > 0) { o.save(); o.setLineDash([5, 7]); o.lineDashOffset = -time * 40; o.lineWidth = 2.6; o.strokeStyle = strain ? `rgba(255,120,40,${live})` : `rgba(250,200,30,${live})`;
+    o.beginPath(); o.moveTo(a.x, a.y); o.lineTo(e.x, e.y); o.stroke(); o.restore(); }
+}
+// water pipe: from the intake at the river or lake into the data centre
+function drawPipe(s) {
+  const g = ease(s.load) * ease(s.lineAge); if (g <= 0) return;
+  const a = s.water, e = { x: a.x + (s.x - a.x) * ease(s.lineAge), y: a.y + (s.y - a.y) * ease(s.lineAge) };
+  o.save(); o.globalAlpha = Math.max(g, .4);
+  o.strokeStyle = "#ffffff"; o.lineWidth = 4.2; o.beginPath(); o.moveTo(a.x, a.y); o.lineTo(e.x, e.y); o.stroke();
+  o.strokeStyle = "#3d9fd1"; o.lineWidth = 2.6; o.stroke();
+  o.setLineDash([4, 6]); o.lineDashOffset = -time * 30; o.strokeStyle = "#dff4ff"; o.lineWidth = 1.4; o.stroke(); o.setLineDash([]);
+  const r = 5 + 3 * ((time * 1.2) % 1);
+  o.strokeStyle = `rgba(61,159,209,${1 - (time * 1.2) % 1})`; o.lineWidth = 1.4; o.beginPath(); o.arc(a.x, a.y, r + 3, 0, 7); o.stroke();
+  o.fillStyle = "#3d9fd1"; o.strokeStyle = "#fff"; o.lineWidth = 1.2; o.beginPath(); o.arc(a.x, a.y, 4, 0, 7); o.fill(); o.stroke();
+  o.restore();
+}
+function drawPlant(show) {
+  if (show <= 0) return;
+  const x = GRID.x - 26, y = GRID.y;
+  o.save(); o.globalAlpha = show;
+  o.fillStyle = "#ebdbe8"; o.strokeStyle = "#cfa9c3"; o.lineWidth = 1; o.beginPath(); o.roundRect(x - 16, y - 16, 40, 32, 4); o.fill(); o.stroke();
+  o.fillStyle = "#3b3f45"; o.beginPath(); o.arc(x, y, 10, 0, 7); o.fill();
+  o.fillStyle = "#fad23c"; o.beginPath(); o.moveTo(x + 1.5, y - 7); o.lineTo(x - 4.5, y + 1); o.lineTo(x - .5, y + 1); o.lineTo(x - 2, y + 7); o.lineTo(x + 4.5, y - 1.5); o.lineTo(x + .5, y - 1.5); o.closePath(); o.fill();
+  o.restore();
+}
+const hatch = (() => { const c = document.createElement("canvas"); c.width = c.height = 12; const g = c.getContext("2d");
+  g.fillStyle = "#e9dcc0"; g.fillRect(0, 0, 12, 12); g.strokeStyle = "#c9b48a"; g.lineWidth = 1.6; g.beginPath(); g.moveTo(-3, 15); g.lineTo(15, -3); g.moveTo(-3, 3); g.lineTo(3, -3); g.moveTo(9, 15); g.lineTo(15, 9); g.stroke();
+  return o.createPattern(c, "repeat"); })();
+function drawPad(s) {
+  const g = ease(s.age), size = CUBE + 30 * g, half = size / 2;
+  if (g <= 0) return;
+  // cleared land around the site: forest, fields or houses are gone
+  o.save(); o.beginPath(); s.clear.forEach(([cx, cy], i) => { const px = s.x + cx * g, py = s.y + cy * g; i ? o.lineTo(px, py) : o.moveTo(px, py); }); o.closePath();
+  o.fillStyle = hatch; o.fill(); o.setLineDash([5, 3]); o.lineWidth = 2.2; o.strokeStyle = "#c8389a"; o.stroke(); o.restore();
+  o.save(); o.globalAlpha = Math.min(1, s.age * 3);
+  o.fillStyle = "#ebdbe8"; o.strokeStyle = "#cfa9c3"; o.lineWidth = .9; o.beginPath(); o.roundRect(s.x - half, s.y - half, size, size, 3); o.fill(); o.stroke();
+  o.fillStyle = "#c9bfc6"; o.fillRect(s.x + CUBE / 2 + 3, s.y - 7, 9 * g, 14); o.strokeStyle = "#a99aa5"; o.lineWidth = .5; o.strokeRect(s.x + CUBE / 2 + 3, s.y - 7, 9 * g, 14);
+  o.restore();
+}
+function drawHall(x, y, alpha) {
+  if (alpha <= 0) return;
+  const h = CUBE / 2;
+  o.save(); o.globalAlpha = alpha;
+  o.fillStyle = "rgba(40,40,60,.18)"; o.fillRect(x - h + 2.5, y - h + 2.5, CUBE, CUBE);
+  o.fillStyle = "#6e7686"; o.fillRect(x - h, y - h, CUBE, CUBE);
+  o.fillStyle = "#8d95a4"; for (let j = 0; j < 5; j++) o.fillRect(x - h + 4, y - h + 5 + j * 6, CUBE - 8, 3.2);
+  o.strokeStyle = "#4b5260"; o.lineWidth = 1.2; o.strokeRect(x - h, y - h, CUBE, CUBE);
+  o.restore();
+}
+// the city heats up with the electricity bill
+function drawCityHeat(v, strain) {
+  if (v < .05) return;
+  const t = clamp(v / 20, 0, 1), col = t < .5 ? mix("#ffd84a", "#ff9a3c", t * 2) : mix("#ff9a3c", "#e8443a", (t - .5) * 2);
+  o.save(); o.globalAlpha = (.12 + .2 * t) * (.85 + .15 * Math.sin(time * 1.4)); o.fillStyle = col; o.fill(B.cityP);
+  o.restore();
+  if (strain && flicker > 0) { o.save(); o.fillStyle = "rgba(20,24,40,.28)"; o.fill(B.cityP); o.restore(); }
+}
+function drawWind(show) {
+  if (show <= 0) return;
+  o.save(); o.globalAlpha = show; o.translate(40, 40);
+  o.fillStyle = "rgba(16,18,16,.78)"; o.beginPath(); o.arc(0, 0, 19, 0, 7); o.fill();
+  o.strokeStyle = "#fff"; o.lineWidth = 2; o.beginPath(); o.moveTo(-9, 0); o.lineTo(8, 0); o.moveTo(3, -5); o.lineTo(9, 0); o.lineTo(3, 5); o.stroke();
+  o.restore();
+}
+function drawTags(v) {
+  if (v < 0.05) return;
+  o.font = "600 11px Inter, ui-sans-serif, system-ui, sans-serif"; o.textBaseline = "middle";
+  billHomes.forEach((h, i) => {
+    if (sites.some(s => Math.abs(s.x - h.x) < 36 && Math.abs(s.y - h.y) < 36)) return;
+    const val = v * (0.85 + (i % 3) * 0.1), txt = `+${val.toFixed(1)} %`, w = o.measureText(txt).width + 26, a = clamp(v / 1.5, 0, 1), tx = h.x, ty = h.y - 24;
+    o.save(); o.globalAlpha = a;
+    o.strokeStyle = "rgba(20,22,20,.85)"; o.lineWidth = 1; o.beginPath(); o.moveTo(h.x, h.y - 3); o.lineTo(tx, ty + 8); o.stroke();
+    o.fillStyle = "#f2c230"; o.beginPath(); o.arc(h.x, h.y, 2.6, 0, 7); o.fill();
+    o.fillStyle = "rgba(18,20,18,.9)"; o.beginPath(); o.roundRect(tx - w / 2, ty - 8.5, w, 17, 8.5); o.fill();
+    o.fillStyle = "#f2c230"; o.beginPath(); o.moveTo(tx - w / 2 + 10, ty - 5); o.lineTo(tx - w / 2 + 6.5, ty + 1); o.lineTo(tx - w / 2 + 9, ty + 1); o.lineTo(tx - w / 2 + 8, ty + 5.5); o.lineTo(tx - w / 2 + 12, ty - 1); o.lineTo(tx - w / 2 + 9.5, ty - 1); o.closePath(); o.fill();
+    o.fillStyle = "#fff"; o.fillText(txt, tx - w / 2 + 17, ty + .5);
+    o.restore();
+  });
+}
+
+/* ---------- loop ---------- */
+let last = performance.now(), drag = null, frameNo = 0;
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now; time += dt;
+  sites.forEach(s => {
+    s.age = Math.min(1, s.age + dt / BUILD); s.lineAge = Math.min(1, s.lineAge + dt / BUILD);
+    if (s.alive) { s.load = Math.min(1, s.load + dt / BUILD); s.noise = Math.min(1, s.noise + dt / BUILD); s.bldg = Math.min(1, s.bldg + dt / 2.5); }
+    else { s.load = Math.max(0, s.load - dt / 10); s.noise = Math.max(0, s.noise - dt / 1.2); s.bldg = Math.max(0, s.bldg - dt / 1.5); }
+  });
+  if (sites.length) trunkAge = Math.min(1, trunkAge + dt / BUILD);
+  const live = sites.filter(s => s.load > 0);
+  const n = live.reduce((a, s) => a + ease(s.load), 0);
+  let pairs = 0; for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) if (dist(live[i], live[j]) < 170) pairs += Math.min(ease(live[i].load), ease(live[j].load));
+  water += clamp(Math.min(.85, .12 * n + .07 * pairs) - water, -dt / 8, dt / 6);
+  bill += (3 * n + 2 * pairs - bill) * (1 - Math.exp(-dt * 1.5));
+  elec = clamp(.25 * n + .1 * pairs, 0, 1);
+  const strain = n >= 2.6 || pairs >= 2;
+
+  if ((frameNo++ & 1) === 0) computeField(strain);
+  o.setTransform(O, 0, 0, O, 0, 0); o.clearRect(0, 0, W, H);
+  drawWater(water);
+  if (strain) { flicker -= dt; if (flicker < -0.15 - Math.random() * 1.6) flicker = .08 + Math.random() * .1; }
+  drawCityHeat(bill, strain);
+  drawPower(GRID, SUB, ease(trunkAge), elec, strain);
+  sites.forEach(s => drawPower(s.tap, { x: s.x + CUBE / 2 + 7, y: s.y }, ease(s.lineAge), ease(s.load), strain));
+  sites.forEach(drawPad);
+  o.save(); o.imageSmoothingQuality = "high"; o.globalAlpha = .85; o.drawImage(midC, 0, 0, W, H); o.restore();   // the light field
+  live.forEach(drawPipe);
+  live.forEach(s => { const g = ease(s.load); if (g <= 0) return;
+    for (let k = 0; k < 46; k++) { const u = (time * 16 + k * 13.7) % 620, mid = 22 * Math.sin(u * .011 - time * .6) + (nz(u * .35 - time * 9, s.y * .2) - .5) * 60;
+      const spread = (nz(k * 31, k * 17) - .5) * 2 * (30 + u * .38), f = 1 - u / 620;
+      o.fillStyle = `rgba(70,70,78,${.55 * g * f})`; o.beginPath(); o.arc(s.x + u, s.y + mid + spread, 1.1 + u * .004, 0, 7); o.fill(); } });
+  drawPlant(ease(trunkAge));
+  sites.forEach(s => drawHall(s.x, s.y, ease(s.bldg)));
+  drawWind(ease(Math.min(1, n)));
+  drawTags(bill);
+  if (drag && drag.map) { o.save(); drawHall(drag.x, drag.y, .85);
+    o.strokeStyle = drag.ok ? "#f2c230" : "#e0483a"; o.lineWidth = 2; o.strokeRect(drag.x - CUBE / 2 - 3, drag.y - CUBE / 2 - 3, CUBE + 6, CUBE + 6); o.restore(); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ---------- tray and drag and drop ---------- */
+const tray = document.getElementById("tray"), ghost = document.getElementById("ghost");
+const renderTray = () => { const free = MAX - alive().length; tray.querySelectorAll(".slot").forEach((sl, i) => sl.classList.toggle("full", i < free)); };
+const toMap = e => { const r = stage.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H, inside: e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom }; };
+function moveGhost(e) {
+  const m = toMap(e), r = stage.getBoundingClientRect(), px = CUBE / W * r.width;
+  if (m.inside) { ghost.hidden = true; drag.map = true; drag.x = m.x; drag.y = m.y; drag.ok = canPlace(m.x, m.y); }
+  else { drag.map = false; ghost.hidden = false; ghost.style.width = ghost.style.height = px + "px"; ghost.style.left = e.clientX - px / 2 + "px"; ghost.style.top = e.clientY - px / 2 + "px"; }
+}
+function startDrag(e, from) {
+  e.preventDefault(); drag = { from, map: false, ok: false };
+  if (from) from.alive = false;
+  moveGhost(e);
+  window.addEventListener("pointermove", moveGhost);
+  window.addEventListener("pointerup", endDrag, { once: true });
+}
+function endDrag(e) {
+  window.removeEventListener("pointermove", moveGhost);
+  const m = toMap(e), d = drag; drag = null; ghost.hidden = true;
+  if (d.from && m.inside && Math.hypot(m.x - d.from.x, m.y - d.from.y) < 4) { d.from.alive = true; renderTray(); return; }
+  if (m.inside && canPlace(m.x, m.y)) sites.push(makeSite(m.x, m.y));
+  else if (m.inside && d.from) d.from.alive = true;
+  renderTray();
+}
+tray.addEventListener("pointerdown", e => { const sl = e.target.closest(".slot.full"); if (sl) startDrag(e, null); });
+stage.addEventListener("pointerdown", e => { const m = toMap(e);
+  const s = alive().find(s => Math.abs(s.x - m.x) < CUBE / 2 + 4 && Math.abs(s.y - m.y) < CUBE / 2 + 4);
+  if (s) startDrag(e, s); });
+document.getElementById("reset").addEventListener("click", () => { sites = []; water = 0; bill = 0; elec = 0; trunkAge = 0; renderTray(); });
+renderTray();
+/* ---------- info panel (German, minimal) ---------- */
+const $ = id => document.getElementById(id);
+const fmt = (v, d = 0) => v.toLocaleString("en-GB", { maximumFractionDigits: d, minimumFractionDigits: d });
+function updatePanel() {
+  const live = alive(), n = live.length;
+  const noiseSet = new Set(), airSet = new Set();
+  live.forEach(s => { s.noiseHomes.forEach(i => noiseSet.add(i)); s.airHomes.forEach(i => airSet.add(i)); });
+  $("st-n").textContent = `${n} / ${MAX}`;
+  $("st-power").textContent = n ? `≈ ${fmt(n * 100)}–${fmt(n * 150)} MW` : "–";
+  $("st-water").textContent = n ? `≈ ${fmt(n * 1.9, 1)}–${fmt(n * 9.5, 1)} M litres/day` : "–";
+  $("st-bill").textContent = n ? `+${fmt(bill, 1)} %` : "–";
+  $("st-noise").textContent = n ? `${fmt(noiseSet.size)} buildings` : "–";
+  $("st-air").textContent = n ? `${fmt(airSet.size)} buildings` : "–";
+  $("st-lake").textContent = n ? `−${fmt(water * 100)} %` : "–";
+  $("st-land").textContent = sites.length ? `${sites.length} cleared` : "–";
+}
+setInterval(updatePanel, 250); updatePanel();
+
+// the gap as a dot grid: 8,000 dots = one data centre for one day, one dot = 1 million prompts (linear)
+(() => {
+  const host = $("gap-chart"), cols = 100, rows = 80, gap = 3.3, W2 = cols * gap, H2 = rows * gap;
+  host.innerHTML = `<canvas role="img" aria-label="8,000 dots make one data-centre day; one highlighted dot is 1 million prompts" data-tip="1 data centre · 1 day ≈ 2.4 GWh = 8,000 dots × 0.3 MWh"></canvas>`;
+  const c = host.firstChild, d = Math.max(2, devicePixelRatio || 1);
+  c.width = W2 * d; c.height = H2 * d; c.style.width = "100%"; c.style.aspectRatio = `${cols} / ${rows}`;
+  const g = c.getContext("2d"); g.scale(d, d);
+  const dc = getComputedStyle(document.documentElement).getPropertyValue("--c-dc").trim() || "#2f7fc8";
+  const pr = getComputedStyle(document.documentElement).getPropertyValue("--c-prompt").trim() || "#b07d00";
+  g.fillStyle = dc;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) { if (i === 4 && j === 4) continue; g.beginPath(); g.arc(i * gap + gap / 2, j * gap + gap / 2, 1.05, 0, 7); g.fill(); }
+  g.fillStyle = "#f6f7f1"; g.beginPath(); g.arc(4 * gap + gap / 2, 4 * gap + gap / 2, 5.2, 0, 7); g.fill();
+  g.fillStyle = pr; g.beginPath(); g.arc(4 * gap + gap / 2, 4 * gap + gap / 2, 1.6, 0, 7); g.fill(); g.strokeStyle = pr; g.lineWidth = 1.2; g.beginPath(); g.arc(4 * gap + gap / 2, 4 * gap + gap / 2, 4, 0, 7); g.stroke();
+})();
+(() => { const tip = $("tip");
+  document.addEventListener("pointermove", e => { const t = e.target.closest?.("[data-tip]");
+    if (!t) { tip.hidden = true; return; } tip.hidden = false; tip.textContent = t.dataset.tip;
+    tip.style.left = Math.min(e.clientX + 12, innerWidth - 240) + "px"; tip.style.top = e.clientY + 14 + "px"; }); })();
+
+// start screen
+(() => { const intro = $("intro"), start = $("start");
+  const close = () => { intro.hidden = true; };
+  start.addEventListener("click", close);
+  intro.addEventListener("click", e => { if (e.target === intro) close(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !intro.hidden) close(); });
+  $("about").addEventListener("click", () => { intro.hidden = false; start.focus(); });
+  start.focus(); })();
+
+})();
+</script>
+</body>
+</html>
